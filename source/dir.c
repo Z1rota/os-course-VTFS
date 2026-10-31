@@ -142,7 +142,7 @@ static int vtfs_iterate(struct file *file, struct dir_context *ctx) {
 static int vtfs_create_node(struct inode *parent, struct dentry *dentry, bool directory) {
     const char *token = parent->i_sb->s_fs_info;
     const char *method = directory ? "mkdir" : "create";
-    char response[21];
+    char response[25];
     char parent_id[24];
     char *name;
     struct inode *inode;

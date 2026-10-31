@@ -58,7 +58,7 @@ static int vtfs_setattr(struct mnt_idmap *idmap, struct dentry *dentry, struct i
     }
 
     if (attr->ia_valid & ATTR_SIZE) {
-        if (attr->ia_size > 0) {
+        if (attr->ia_size < 0) {
             return -EINVAL;
         }
         snprintf(path, sizeof(path),
