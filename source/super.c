@@ -9,7 +9,7 @@
 #include "http.h"
 
 #define VTFS_MAGIC 0x56544653
-#define VTFS_ROOT_RESPONSE_SIZE 21
+#define VTFS_ROOT_RESPONSE_SIZE 25
 #define VTFS_DIRECTORY 2
 
 static int vtfs_fill_super(struct super_block *sb, void *data, int silent) {

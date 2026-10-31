@@ -15,7 +15,7 @@
 static char *vtfs_encode_name(const struct dentry *dentry);
 
 static struct dentry *vtfs_lookup(struct inode *parent, struct dentry *dentry, unsigned int flags) {
-    char response[21];
+    char response[25];
     char parent_id[24];
     char *encoded_name;
     size_t received;
@@ -48,7 +48,7 @@ static struct dentry *vtfs_lookup(struct inode *parent, struct dentry *dentry, u
         return ERR_PTR(-EIO);
     }
 
-    inode = vtfs_get_inode(parent->i_sb,get_unaligned_le64(response),response[8],get_unaligned_le32(response + 9),get_unaligned_le64(response+13));
+    inode = vtfs_get_inode(parent->i_sb,get_unaligned_le64(response),response[8],get_unaligned_le32(response + 9),get_unaligned_le64(response+13),get_unaligned_le32(response + 21));
 
     if (IS_ERR(inode)) {
         return ERR_PTR(PTR_ERR(inode));
@@ -170,8 +170,7 @@ static int vtfs_create_node(struct inode *parent, struct dentry *dentry, bool di
     if (response[8] != (directory ? VTFS_DIRECTORY : VTFS_FILE)) {
         return -EIO;
     }
-    inode = vtfs_get_inode(parent->i_sb,get_unaligned_le64(response),response[8],
-get_unaligned_le32(response+9),get_unaligned_le64(response+13));
+    inode = vtfs_get_inode(parent->i_sb,get_unaligned_le64(response),response[8], get_unaligned_le32(response+9),get_unaligned_le64(response+13),get_unaligned_le32(response + 21));
 
 if (IS_ERR(inode)) {
     return PTR_ERR(inode);
@@ -243,12 +242,54 @@ static int vtfs_rmdir(struct inode *parent, struct dentry *dentry) {
     return vtfs_delete_node(parent,dentry,true);
 }
 
+static int vtfs_link(struct dentry *old_dentry, struct inode *parent, struct dentry *new_dentry) {
+    struct inode *inode = d_inode(old_dentry);
+    const char *token = parent->i_sb->s_fs_info;
+    char inode_id[24];
+    char parent_id[24];
+    char response[25];
+    char *name;
+    size_t received = 0;
+    int64_t status;
+    struct timespec64 now;
+
+    if (!S_ISREG(inode->i_mode)) {
+        return -EPERM;
+    }
+    name = vtfs_encode_name(new_dentry);
+
+    if (IS_ERR(name)) {
+        return PTR_ERR(name);
+    }
+    snprintf(inode_id,sizeof(inode_id),"%lu",inode->i_ino);
+    snprintf(parent_id,sizeof(parent_id),"%lu",parent->i_ino);
+
+    status = vtfs_http_call(token,"link",response,sizeof(response),&received,3,"inode",inode_id,"parent",parent_id,"name",name);
+
+    kfree(name);
+    if (status != 0) {
+        return status > 0 ? -(int)status : -EIO;
+    }
+
+    if (received != sizeof(response) || get_unaligned_le64(response) != inode->i_ino || response[8] != VTFS_FILE) {
+        return -EIO;
+    }
+    ihold(inode);
+    inc_nlink(inode);
+    d_instantiate(new_dentry,inode);
+    inode_set_ctime_current(inode);
+    now = inode_set_ctime_current(parent);
+    inode_set_mtime_to_ts(parent,now);
+    return 0;
+}
+
 const struct inode_operations vtfs_dir_inode_ops = {
     .lookup = vtfs_lookup,
     .create = vtfs_create,
     .mkdir = vtfs_mkdir,
     .rmdir = vtfs_rmdir,
     .unlink = vtfs_unlink,
+    .link = vtfs_link,
 };
 const struct file_operations vtfs_dir_file_ops = {
     .owner = THIS_MODULE,

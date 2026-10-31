@@ -1,8 +1,9 @@
 #include "http.h"
 #include <linux/net.h>
 #include <net/net_namespace.h>
+#include <asm/unaligned.h>
 
-const char *SERVER_IP = "172.19.128.1";
+const char *SERVER_IP = "172.18.128.1";
 const int SERVER_PORT = 8080;
 
 // callee should call free_request on received buffer
@@ -202,6 +203,120 @@ int64_t vtfs_http_call(const char *token, const char *method,
   kfree(raw_response_buffer);
   return error;
 }
+
+static int vtfs_send_all(struct socket *sock, const void *data, size_t size) {
+  size_t sent = 0;
+
+  while (sent < size) {
+    struct kvec vec = {
+      .iov_base = (char *)data + sent,
+      .iov_len = size - sent
+    };
+    struct msghdr msg = {0};
+    int ret = kernel_sendmsg(sock,&msg,&vec,1,vec.iov_len);
+    if (ret <= 0) {
+      return ret < 0 ? ret : -EIO;
+    }
+    sent += ret;
+  }
+  return 0;
+}
+
+int vtfs_http_post(const char *path, const void *body, size_t body_size,
+                   char *response, size_t response_size, size_t *received)
+{
+  struct socket *sock;
+  struct sockaddr_in addr = {
+    .sin_family = AF_INET,
+    .sin_addr.s_addr = in_aton(SERVER_IP),
+    .sin_port = htons(SERVER_PORT)
+  };
+
+  char *request;
+  char *raw_response;
+  size_t raw_size;
+  int header_size, read_bytes, error;
+  int64_t status;
+
+  *received = 0;
+
+  request = kmalloc(1024, GFP_KERNEL);
+  if (!request)
+    return -ENOMEM;
+
+  header_size = snprintf(request, 1024,
+                         "POST %s HTTP/1.1\r\n"
+                         "Host: %s:%d\r\n"
+                         "Content-Type: application/octet-stream\r\n"
+                         "Content-Length: %zu\r\n"
+                         "Connection: close\r\n\r\n",
+                         path, SERVER_IP, SERVER_PORT, body_size);
+
+  if (header_size < 0 || header_size >= 1024) {
+    kfree(request);
+    return -ENAMETOOLONG;
+  }
+
+  error = sock_create_kern(&init_net, AF_INET, SOCK_STREAM, IPPROTO_TCP, &sock);
+  if (error < 0) {
+    kfree(request);
+    return error;
+  }
+
+  error = kernel_connect(sock, (struct sockaddr *)&addr, sizeof(addr), 0);
+  if (error < 0)
+    goto out_socket;
+
+  error = vtfs_send_all(sock, request, header_size);
+  if (error < 0)
+    goto out_socket;
+
+  if (body_size > 0) {
+    if (!body) {
+      error = -EINVAL;
+      goto out_socket;
+    }
+
+    error = vtfs_send_all(sock, body, body_size);
+    if (error < 0)
+      goto out_socket;
+  }
+
+  raw_size = response_size + 1024;
+  raw_response = kmalloc(raw_size, GFP_KERNEL);
+  if (!raw_response) {
+    error = -ENOMEM;
+    goto out_socket;
+  }
+
+  read_bytes = receive_all(sock, raw_response, raw_size);
+  if (read_bytes <= 0) {
+    error = -EIO;
+    goto out_response;
+  }
+
+  status = parse_http_response(raw_response, read_bytes, response,
+                               response_size, received);
+
+  if (status > 0)
+    error = -(int)status;
+  else if (status < 0)
+    error = -EIO;
+  else
+    error = 0;
+
+out_response:
+  kfree(raw_response);
+
+out_socket:
+  kfree(request);
+  kernel_sock_shutdown(sock, SHUT_RDWR);
+  sock_release(sock);
+
+  return error;
+}
+
+
 
 void encode(const char *src, char *dst) {
   while (*src != '\0') {

@@ -14,8 +14,9 @@ struct dentry *vtfs_mount(struct file_system_type *fs_type, int flags,
 
 void vtfs_kill_sb(struct super_block *sb);
 
-struct inode *vtfs_get_inode(struct super_block *sb, u64 id, u8 type, u32 permissions, u64 size);
+struct inode *vtfs_get_inode(struct super_block *sb, u64 id, u8 type, u32 permissions, u64 size,u32 link_count);
 extern const struct inode_operations vtfs_dir_inode_ops;
 extern const struct file_operations vtfs_dir_file_ops;
+extern const struct file_operations vtfs_file_ops;
 
 #endif

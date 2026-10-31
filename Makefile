@@ -1,6 +1,6 @@
 obj-m := vtfs.o
 vtfs-y := source/vtfs_main.o source/super.o source/inode.o \
-          source/dir.o source/http.o
+          source/dir.o source/http.o source/file.o
 
 KDIR := /lib/modules/$(shell uname -r)/build
 
