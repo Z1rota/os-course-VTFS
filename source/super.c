@@ -33,7 +33,7 @@ static int vtfs_session_request(struct vtfs_sb_info *info, const char *method) {
 }
 
 static void vtfs_heartbeat_work(struct work_struct *work) {
-  struct vtfs_sb_info *info = container_of(to_delayed_work(work), struct vtfs_sb_info, hearbeat_work);
+  struct vtfs_sb_info *info = container_of(to_delayed_work(work), struct vtfs_sb_info, heartbeat_work);
   int error = vtfs_session_request(info, "session/heartbeat");
    if (error) {
         pr_warn("vtfs: heartbeat failed: %d\n", error);
@@ -46,22 +46,28 @@ static void vtfs_heartbeat_work(struct work_struct *work) {
 
 static int vtfs_fill_super(struct super_block *sb, void *data, int silent) {
   const char *token = data;
-  char response[VTFS_ROOT_RESPONSE_SIZE] = {0};
-  struct inode *root_inode;
-  __le64 inode_id;
-  __le32 permissions;
-  struct timespec64 now;
-  int64_t status;
-  size_t received;
-  struct vtfs_sb_info *info;
-  char session_response[8];
-  size_t session_received = 0;
-  int error;
+    char response[VTFS_ROOT_RESPONSE_SIZE] = {0};
+    char session_response[8];
+
+    struct vtfs_sb_info *info;
+    struct inode *root_inode;
+    struct timespec64 now;
+
+    __le64 inode_id;
+    __le32 permissions;
+
+    int64_t status;
+    size_t received = 0;
+    size_t session_received = 0;
+    int error;
+
 
   if (!token || !*token) {
     return -EINVAL;
   }
+
   status = vtfs_http_call(token, "root", response, sizeof(response), &received, 0);
+
   if (status != 0) {
     return status > 0 ? -(int)status : -EIO;
   }
@@ -72,13 +78,47 @@ static int vtfs_fill_super(struct super_block *sb, void *data, int silent) {
 
   memcpy(&inode_id, response, sizeof(inode_id));
   memcpy(&permissions,response+9,sizeof(permissions));
-  sb->s_magic= VTFS_MAGIC;
-  sb->s_fs_info = kstrdup(token, GFP_KERNEL);
-  if (!sb->s_fs_info) {
-    return -ENOMEM;
+
+  info = kzalloc(sizeof(*info), GFP_KERNEL);
+  if (!info) {
+     return -ENOMEM;
   }
+
+  info->token = kstrdup(token, GFP_KERNEL);
+
+  if (!info->token) {
+      error = -ENOMEM;
+      goto free_info;
+  }
+  status = vtfs_http_call(info->token, "session/start",session_response, sizeof(session_response),&session_received, 0);
+
+  if (status != 0) {
+      error = status > 0 ? -(int)status : -EIO;
+      goto free_info;
+  }
+
+  if (session_received != sizeof(session_response)) {
+      error = -EIO;
+      goto free_info;
+  }
+
+  info->session_id = get_unaligned_le64(session_response);
+
+  if (info->session_id == 0) {
+      error = -EIO;
+      goto free_info;
+  }
+
+  INIT_DELAYED_WORK(&info->heartbeat_work, vtfs_heartbeat_work);
+
+  sb->s_magic = VTFS_MAGIC;
+  sb->s_fs_info = info;
+
   root_inode = new_inode(sb);
-  if (!root_inode) goto no_memory;
+  if (!root_inode) {
+      error = -ENOMEM;
+      goto end_session;
+  }
 
   inode_init_owner(&nop_mnt_idmap,root_inode,NULL,S_IFDIR | (le32_to_cpu(permissions) & 07777));
   root_inode->i_uid = KUIDT_INIT(VTFS_DEFAULT_UID);
@@ -94,25 +134,50 @@ static int vtfs_fill_super(struct super_block *sb, void *data, int silent) {
 
   sb->s_root = d_make_root(root_inode);
   if (!sb->s_root) {
-    goto no_memory;
+      error = -ENOMEM;
+      goto end_session;
   }
-  pr_info("vtfs mounted\n");
+  schedule_delayed_work(&info->heartbeat_work,VTFS_HEARTBEAT_INTERVAL);
+
+  pr_info("vtfs mounted, session=%llu\n",(unsigned long long)info->session_id);
+
   return 0;
 
-  no_memory:
-    kfree(sb->s_fs_info);
+  end_session:
+    vtfs_session_request(info, "session/end");
     sb->s_fs_info = NULL;
-    return -ENOMEM;
+
+  free_info:
+    kfree(info->token);
+    kfree(info);
+    return error;
 }
 
 struct dentry *vtfs_mount(struct file_system_type *fs_type,int flags, const char *dev_name, void *data) {
   return mount_nodev(fs_type,flags,(void *)dev_name,vtfs_fill_super);
 }
 
-void vtfs_kill_sb(struct super_block *sb) {
-  void *token = sb->s_fs_info;
-  kill_anon_super(sb);
-  kfree(token);
-  pr_info("vtfs unmounted\n");
+oid vtfs_kill_sb(struct super_block *sb) {
+    struct vtfs_sb_info *info = sb->s_fs_info;
+
+    if (info) {
+        WRITE_ONCE(info->stopping, true);
+        cancel_delayed_work_sync(&info->heartbeat_work);
+    }
+
+    kill_anon_super(sb);
+
+    if (info) {
+        int error = vtfs_session_request(info, "session/end");
+
+        if (error)
+            pr_warn("vtfs: failed to end session: %d\n", error);
+
+        kfree(info->token);
+        kfree(info);
+    }
+
+    sb->s_fs_info = NULL;
+    pr_info("vtfs unmounted\n");
 }
 

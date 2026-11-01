@@ -36,6 +36,14 @@ static int vtfs_open(struct inode *inode, struct file *file) {
         kfree(handle);
         return -EIO;
     }
+
+    *handle = get_unaligned_le64(response);
+
+    if (*handle == 0) {
+        kfree(handle);
+        return -EIO;
+    }
+
     file->private_data = handle;
     return 0;
 }

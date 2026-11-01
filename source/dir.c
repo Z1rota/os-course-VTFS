@@ -59,7 +59,7 @@ static struct dentry *vtfs_lookup(struct inode *parent, struct dentry *dentry, u
 
 static int vtfs_iterate(struct file *file, struct dir_context *ctx) {
     struct inode *inode = file_inode(file);
-    const char *token = vtfs_token(parent->i_sb);
+    const char *token = vtfs_token(inode->i_sb);
     char parent_id[24];
     char *response;
     size_t received, offset;
