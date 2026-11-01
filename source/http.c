@@ -3,7 +3,7 @@
 #include <net/net_namespace.h>
 #include <asm/unaligned.h>
 
-const char *SERVER_IP = "172.18.128.1";
+const char *SERVER_IP = "172.19.80.1";
 const int SERVER_PORT = 8080;
 
 // callee should call free_request on received buffer

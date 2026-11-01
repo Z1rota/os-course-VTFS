@@ -157,7 +157,7 @@ struct dentry *vtfs_mount(struct file_system_type *fs_type,int flags, const char
   return mount_nodev(fs_type,flags,(void *)dev_name,vtfs_fill_super);
 }
 
-oid vtfs_kill_sb(struct super_block *sb) {
+void vtfs_kill_sb(struct super_block *sb) {
     struct vtfs_sb_info *info = sb->s_fs_info;
 
     if (info) {
