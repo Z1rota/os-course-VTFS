@@ -63,7 +63,7 @@ static int vtfs_setattr(struct mnt_idmap *idmap, struct dentry *dentry, struct i
         }
         snprintf(path, sizeof(path),
              "/api/truncate?token=%s&inode=%lu&size=%lld",
-             (char *)inode->i_sb->s_fs_info,
+             vtfs_token(inode->i_sb),
              inode->i_ino, (long long)attr->ia_size);
 
         error = vtfs_http_post(path, NULL, 0, response, sizeof(response), &received);

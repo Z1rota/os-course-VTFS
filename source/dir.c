@@ -21,7 +21,7 @@ static struct dentry *vtfs_lookup(struct inode *parent, struct dentry *dentry, u
     size_t received;
     int64_t status;
     struct inode *inode;
-    const char *token = parent->i_sb->s_fs_info;
+    const char *token = vtfs_token(parent->i_sb);
 
     if (dentry->d_name.len > NAME_MAX) {
         return ERR_PTR(-ENAMETOOLONG);
@@ -59,7 +59,7 @@ static struct dentry *vtfs_lookup(struct inode *parent, struct dentry *dentry, u
 
 static int vtfs_iterate(struct file *file, struct dir_context *ctx) {
     struct inode *inode = file_inode(file);
-    const char *token = inode->i_sb->s_fs_info;
+    const char *token = vtfs_token(parent->i_sb);
     char parent_id[24];
     char *response;
     size_t received, offset;
@@ -140,7 +140,7 @@ static int vtfs_iterate(struct file *file, struct dir_context *ctx) {
 }
 
 static int vtfs_create_node(struct inode *parent, struct dentry *dentry, bool directory) {
-    const char *token = parent->i_sb->s_fs_info;
+    const char *token = vtfs_token(parent->i_sb);
     const char *method = directory ? "mkdir" : "create";
     char response[25];
     char parent_id[24];
@@ -186,7 +186,7 @@ now = inode_set_ctime_current(parent);
 }
 
 static int vtfs_delete_node(struct inode *parent,struct dentry *dentry, bool directory) {
-    const char *token = parent->i_sb->s_fs_info;
+    const char *token = vtfs_token(parent->i_sb);
     const char *method = directory ? "rmdir" : "unlink";
     struct inode *inode = d_inode(dentry);
     char parent_id[24];
@@ -244,7 +244,7 @@ static int vtfs_rmdir(struct inode *parent, struct dentry *dentry) {
 
 static int vtfs_link(struct dentry *old_dentry, struct inode *parent, struct dentry *new_dentry) {
     struct inode *inode = d_inode(old_dentry);
-    const char *token = parent->i_sb->s_fs_info;
+    const char *token = vtfs_token(parent->i_sb);
     char inode_id[24];
     char parent_id[24];
     char response[25];

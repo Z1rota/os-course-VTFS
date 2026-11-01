@@ -7,10 +7,42 @@
 
 #include "vtfs.h"
 #include "http.h"
+#include <linux/jiffies.h>
+#include <asm/unaligned.h>
 
 #define VTFS_MAGIC 0x56544653
 #define VTFS_ROOT_RESPONSE_SIZE 25
 #define VTFS_DIRECTORY 2
+#define VTFS_HEARTBEAT_INTERVAL (15 * HZ)
+
+static int vtfs_session_request(struct vtfs_sb_info *info, const char *method) {
+  char session_id[24];
+    char response[1];
+    size_t received = 0;
+    int64_t status;
+
+    snprintf(session_id, sizeof(session_id), "%llu", (unsigned long long)info->session_id);
+
+    status = vtfs_http_call(info->token, method, response, sizeof(response), &received, 1, "session", session_id);
+
+    if (status != 0) {
+        return status > 0 ? -(int)status : -EIO;
+    }
+
+    return received == 0 ? 0 : -EIO;
+}
+
+static void vtfs_heartbeat_work(struct work_struct *work) {
+  struct vtfs_sb_info *info = container_of(to_delayed_work(work), struct vtfs_sb_info, hearbeat_work);
+  int error = vtfs_session_request(info, "session/heartbeat");
+   if (error) {
+        pr_warn("vtfs: heartbeat failed: %d\n", error);
+    }
+
+    if (!READ_ONCE(info->stopping)) {
+        schedule_delayed_work(&info->heartbeat_work,VTFS_HEARTBEAT_INTERVAL);
+    }
+}
 
 static int vtfs_fill_super(struct super_block *sb, void *data, int silent) {
   const char *token = data;
@@ -21,6 +53,10 @@ static int vtfs_fill_super(struct super_block *sb, void *data, int silent) {
   struct timespec64 now;
   int64_t status;
   size_t received;
+  struct vtfs_sb_info *info;
+  char session_response[8];
+  size_t session_received = 0;
+  int error;
 
   if (!token || !*token) {
     return -EINVAL;
